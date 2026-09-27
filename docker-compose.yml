@@ -1,0 +1,12 @@
+services:
+  camera-web:
+    build:
+      context: .
+      dockerfile: webapp/Dockerfile
+      args:
+        SDK_LIB_DIR: lib/x64   # switch to lib/arm64 on ARM servers
+    image: camera-web:latest
+    network_mode: host        # required: GigE Vision camera discovery uses UDP broadcast
+    volumes:
+      - ./storage:/app/storage
+    restart: unless-stopped

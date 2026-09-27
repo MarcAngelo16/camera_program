@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Camera Control</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #666;
+    --border: #e2e2e4;
+    --accent: #2563eb;
+    --danger: #dc2626;
+    --ok: #16a34a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a;
+      --card: #202126;
+      --text: #ececec;
+      --muted: #9a9a9e;
+      --border: #34353b;
+      --accent: #5b8def;
+      --danger: #f0605e;
+      --ok: #4ade80;
+    }
+  }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; margin: 0; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 32px 20px; }
+  h1 { font-size: 20px; margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--danger); }
+  .muted { color: var(--muted); font-size: 13px; }
+  button { font-size: 14px; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  button.stop { background: var(--danger); color: white; border-color: var(--danger); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions { display: flex; gap: 10px; margin-top: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  a { color: var(--accent); }
+  #err { color: var(--danger); font-size: 13px; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Camera Control</h1>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <span id="statusDot" class="dot off"></span>
+        <strong id="statusText">Checking camera...</strong>
+      </div>
+      <div class="muted" id="deviceInfo"></div>
+    </div>
+    <div class="actions">
+      <button id="btnStart" class="primary" onclick="startRecording()">Start Recording</button>
+      <button id="btnStop" class="stop" onclick="stopRecording()" disabled>Stop Recording</button>
+      <button id="btnSnap" onclick="takeSnapshot()">Snapshot</button>
+    </div>
+    <div id="err"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <strong>Saved files</strong>
+      <button onclick="loadRecordings()">Refresh</button>
+    </div>
+    <table id="fileTable">
+      <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+}
+
+function setError(msg) {
+  document.getElementById('err').textContent = msg || '';
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api('/api/camera/status');
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    const info = document.getElementById('deviceInfo');
+
+    dot.className = 'dot ' + (s.connected ? 'on' : 'off');
+    text.textContent = s.connected ? 'Camera connected' : 'Camera not found';
+    info.textContent = s.connected ? `${s.device.friendly_name} (${s.device.serial_number})` : (s.last_error || '');
+
+    document.getElementById('btnStart').disabled = !s.connected || s.recording;
+    document.getElementById('btnStop').disabled = !s.connected || !s.recording;
+    document.getElementById('btnSnap').disabled = !s.connected;
+  } catch (e) {
+    setError(e.message);
+  }
+}
+
+async function startRecording() {
+  setError('');
+  try {
+    await api('/api/record/start', { method: 'POST' });
+  } catch (e) { setError(e.message); }
+  refreshStatus();
+}
+
+async function stopRecording() {
+  setError('');
+  try {
+    await api('/api/record/stop', { method: 'POST' });
+    loadRecordings();
+  } catch (e) { setError(e.message); }
+  refreshStatus();
+}
+
+async function takeSnapshot() {
+  setError('');
+  try {
+    await api('/api/snapshot', { method: 'POST' });
+    loadRecordings();
+  } catch (e) { setError(e.message); }
+}
+
+function fmtSize(bytes) {
+  if (bytes > 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+  if (bytes > 1e3) return (bytes / 1e3).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
+async function loadRecordings() {
+  try {
+    const data = await api('/api/recordings');
+    const tbody = document.querySelector('#fileTable tbody');
+    tbody.innerHTML = '';
+    for (const f of data.files.reverse()) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${f.name}</td><td>${fmtSize(f.size_bytes)}</td>` +
+        `<td><a href="/api/recordings/${encodeURIComponent(f.name)}">Download</a></td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (e) { setError(e.message); }
+}
+
+refreshStatus();
+loadRecordings();
+setInterval(refreshStatus, 3000);
+</script>
+</body>
+</html>
