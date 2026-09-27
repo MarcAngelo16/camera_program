@@ -1,11 +1,12 @@
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .camera import CameraController, CameraNotReady
+from .upload import upload_async
 
 # Default layout: webapp/app/main.py -> webapp/storage, webapp/static.
 # In the Docker image this is /app/app/main.py -> /app/storage, /app/static,
@@ -43,6 +44,7 @@ def record_stop():
         raise HTTPException(status_code=503, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    upload_async(os.path.join(STORAGE_DIR, filename), filename)
     return {"recording": False, "file": filename}
 
 
@@ -52,6 +54,7 @@ def snapshot():
         filename = controller.snapshot()
     except CameraNotReady as e:
         raise HTTPException(status_code=503, detail=str(e))
+    upload_async(os.path.join(STORAGE_DIR, filename), filename)
     return {"file": filename}
 
 
@@ -59,6 +62,8 @@ def snapshot():
 def list_recordings():
     entries = []
     for name in sorted(os.listdir(STORAGE_DIR)):
+        if name.startswith("."):
+            continue
         path = os.path.join(STORAGE_DIR, name)
         if not os.path.isfile(path):
             continue
@@ -75,6 +80,22 @@ def download_recording(name: str):
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="file not found")
     return FileResponse(path, filename=name)
+
+
+@app.post("/api/upload")
+async def upload_recording(file: UploadFile = File(...)):
+    """Receive a finished file pushed from an edge box (see app/upload.py).
+
+    Not used on the edge box itself (UPLOAD_URL there points elsewhere) —
+    this only matters on whichever instance is acting as central storage.
+    """
+    if not file.filename or "/" in file.filename or file.filename in (".", ".."):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    dest = os.path.join(STORAGE_DIR, file.filename)
+    with open(dest, "wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            out.write(chunk)
+    return {"saved": file.filename}
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
