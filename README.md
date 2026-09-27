@@ -35,29 +35,66 @@ storage/             Recorded videos / snapshots land here (bind-mounted volume)
 
 ## Current status (as of this writing)
 
-- Single-camera demo is built and deployed, reachable at
-  `https://camera.satriamuda.cloud` (see [`PLAN.md`](PLAN.md) for why it's a
-  subdomain and what runs where).
-- No physical camera connected yet in production — the site correctly reports
-  "camera not found" until one is on the network.
+- **A real camera (MindVision MV-GE232GC) is connected and working end to
+  end**, reachable at `https://camera.satriamuda.cloud`. Verified: the site
+  shows the camera as connected (product name + serial number), and
+  start/stop recording + snapshot work against real hardware.
+- The camera is plugged into a **Windows laptop** acting as the edge box (see
+  [`PLAN.md`](PLAN.md) for why the camera-facing app has to run on a machine
+  physically on the camera's network — this VPS can't reach it directly).
+  The laptop runs `webapp/app` directly with `uvicorn` (not Docker — Docker
+  Desktop on Windows can't do real host networking, and this repo only ships
+  the Linux SDK binary anyway; Windows worked because the vendor's driver was
+  already installed separately on that machine).
+- The laptop and this VPS are linked over a **WireGuard tunnel**
+  (server `10.10.0.1`, laptop `10.10.0.2`) so the VPS can reach the laptop's
+  API despite it sitting behind a home/office router with no public IP.
+- **The public page itself is hosted directly on this VPS**
+  (`/var/www/camera.satriamuda.cloud/`, served by nginx), independent of the
+  laptop — only `/api/...` calls are proxied over the tunnel to the laptop.
+  This means the site always loads even if the laptop/tunnel is down; in that
+  case the page shows "Camera service unreachable" instead of a raw gateway
+  error or a stuck status. ("Camera service unreachable" = can't reach the
+  laptop at all; "Camera not found" = laptop's app is running fine, just no
+  camera plugged in — these are deliberately different messages.)
+- **This is still a demo/proof-of-concept, not a durable deployment**: the
+  laptop must stay powered on and awake with the `uvicorn` command running in
+  an open terminal. Nothing here yet survives a reboot or a closed terminal —
+  see `PLAN.md`'s open questions for what a real field deployment needs
+  (an always-on edge box, the app running as a background service, etc).
 - No AI/analytics pipeline exists yet. This phase is scoped to **reliably
   recording and collecting video**, nothing more.
 
-## Running it
+## Running the edge app (the machine physically connected to the camera)
 
+Two ways, depending on the OS of that machine:
+
+**Linux** (recommended for a real deployment — matches this repo's Docker setup):
 ```bash
 docker compose up --build -d
 ```
-
 Requires `--network host` in `docker-compose.yml` (already configured) —
 GigE Vision camera discovery uses LAN UDP broadcast, which doesn't cross
-Docker's default bridge network. This also means **the container must run on
-a machine that is physically on the same local network as the camera** — see
-`PLAN.md` for why that's a different machine than this docs' hosting VPS in
-the real multi-field deployment.
+Docker's default bridge network. Swap `SDK_LIB_DIR` in `docker-compose.yml`
+between `lib/x64` and `lib/arm64` to match the host's CPU architecture.
 
-Swap `SDK_LIB_DIR` in `docker-compose.yml` between `lib/x64` and `lib/arm64`
-to match the host's CPU architecture.
+**Windows** (works if the vendor's camera driver/DLL is already installed on
+that machine — this repo does not include a Windows SDK binary, only Linux):
+```
+pip install fastapi "uvicorn[standard]"
+cd webapp
+uvicorn app.main:app --host 0.0.0.0 --port 8001
+```
+Confirm it works locally first with `curl http://localhost:8001/api/camera/status`
+before relying on any tunnel/remote access.
+
+## Connecting a remote edge box to the public site
+
+If the edge machine (laptop, mini-PC, etc.) isn't on the same network as
+wherever the site is publicly hosted, link the two with a WireGuard tunnel
+(what's currently deployed) and point nginx's `/api/` proxy at the edge
+box's tunnel IP instead of `127.0.0.1`. See `PLAN.md` for the full reasoning
+on why this split (edge box vs. central server) exists at all.
 
 ## API
 

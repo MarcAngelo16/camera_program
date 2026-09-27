@@ -91,6 +91,20 @@ function setError(msg) {
   document.getElementById('err').textContent = msg || '';
 }
 
+function setUnreachable(message) {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  const info = document.getElementById('deviceInfo');
+
+  dot.className = 'dot off';
+  text.textContent = 'Camera service unreachable';
+  info.textContent = message;
+
+  document.getElementById('btnStart').disabled = true;
+  document.getElementById('btnStop').disabled = true;
+  document.getElementById('btnSnap').disabled = true;
+}
+
 async function refreshStatus() {
   try {
     const s = await api('/api/camera/status');
@@ -105,8 +119,12 @@ async function refreshStatus() {
     document.getElementById('btnStart').disabled = !s.connected || s.recording;
     document.getElementById('btnStop').disabled = !s.connected || !s.recording;
     document.getElementById('btnSnap').disabled = !s.connected;
+    setError('');
   } catch (e) {
-    setError(e.message);
+    // The edge box (laptop) is unreachable over the tunnel, or its app isn't
+    // running — distinct from "camera not found", which is a normal status
+    // response from a reachable app that just has no camera plugged in.
+    setUnreachable('The recording computer for this field is offline or unreachable.');
   }
 }
 
