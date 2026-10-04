@@ -223,12 +223,22 @@ class CameraController:
         if len(timestamps) >= 2:
             achieved_fps = (len(timestamps) - 1) / (timestamps[-1] - timestamps[0])
 
+        # psutil reports CPU% relative to one core (100% = one core fully
+        # busy), which is meaningless without knowing how many cores the
+        # machine has -- e.g. 100% means "maxed out" on a single-core Pi
+        # but is nothing on a many-core laptop. Report both the raw percent
+        # and how many cores that actually amounts to.
+        cpu_percent = _process.cpu_percent(interval=None)
+        cpu_count = os.cpu_count() or 1
+
         return {
             "frames_processed": self._frames_processed,
             "isp_ms_avg": sum(isp_times) / len(isp_times) if isp_times else None,
             "isp_ms_last": isp_times[-1] if isp_times else None,
             "achieved_fps": achieved_fps,
-            "process_cpu_percent": _process.cpu_percent(interval=None),
+            "process_cpu_percent": cpu_percent,
+            "process_cores_used": cpu_percent / 100,
+            "cpu_count": cpu_count,
             "process_rss_mb": _process.memory_info().rss / (1024 * 1024),
         }
 

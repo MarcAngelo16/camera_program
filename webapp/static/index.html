@@ -248,7 +248,8 @@ async function loadRecordings() {
 async function refreshStats() {
   try {
     const s = await api('/api/camera/stats');
-    document.getElementById('statCpu').textContent = `${s.process_cpu_percent.toFixed(1)}%`;
+    document.getElementById('statCpu').textContent =
+      `${s.process_cores_used.toFixed(2)} of ${s.cpu_count} cores (${s.process_cpu_percent.toFixed(1)}%)`;
     document.getElementById('statRam').textContent = `${s.process_rss_mb.toFixed(0)} MB`;
     document.getElementById('statIsp').textContent = s.isp_ms_avg != null
       ? `${s.isp_ms_avg.toFixed(1)} ms avg (last ${s.isp_ms_last.toFixed(1)} ms)`
