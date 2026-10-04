@@ -89,6 +89,14 @@
   </div>
 
   <div class="card">
+    <strong>Recent segments (original → transcoded)</strong>
+    <table id="segmentTable" style="margin-top: 10px;">
+      <thead><tr><th>Chunk</th><th>Original</th><th>Transcoded</th><th>Ratio</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
     <div class="row">
       <strong>Saved files</strong>
       <button onclick="loadRecordings()">Refresh</button>
@@ -286,6 +294,18 @@ async function refreshStats() {
 
     document.getElementById('statProcess').textContent =
       `${s.process_cores_used.toFixed(2)} cores, ${s.process_rss_mb.toFixed(0)} MB RAM`;
+
+    const tbody = document.querySelector('#segmentTable tbody');
+    tbody.innerHTML = '';
+    for (const seg of (s.segment_history || [])) {
+      const tr = document.createElement('tr');
+      const transcodedText = seg.transcoded_mb != null ? `${seg.transcoded_mb.toFixed(1)} MB` : '—';
+      const ratioText = seg.ratio != null ? `${seg.ratio.toFixed(1)}x` : '—';
+      const statusText = seg.uploaded ? 'uploaded' : `failed: ${seg.error || 'unknown'}`;
+      tr.innerHTML = `<td>${seg.filename}</td><td>${seg.original_mb.toFixed(1)} MB</td>` +
+        `<td>${transcodedText}</td><td>${ratioText}</td><td class="muted">${statusText}</td>`;
+      tbody.appendChild(tr);
+    }
   } catch (e) { /* edge box unreachable; refreshStatus already surfaces this */ }
 }
 

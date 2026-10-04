@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .camera import CameraController, CameraNotReady
+from .transcode import segment_history
 from .upload import last_upload_stats, upload_async
 
 # Default layout: webapp/app/main.py -> webapp/storage, webapp/static.
@@ -30,6 +31,7 @@ def camera_status():
 def camera_stats():
     stats = controller.stats()
     stats["last_upload"] = last_upload_stats()
+    stats["segment_history"] = segment_history()
     return stats
 
 

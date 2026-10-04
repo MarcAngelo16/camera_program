@@ -17,12 +17,34 @@ import logging
 import os
 import subprocess
 import threading
+from collections import deque
 
 from .upload import upload_sync
 
 logger = logging.getLogger(__name__)
 
 TRANSCODE_TIMEOUT_SECONDS = 300
+HISTORY_SIZE = 20  # recent chunks kept for the debug panel, newest first
+
+_history_lock = threading.Lock()
+_history = deque(maxlen=HISTORY_SIZE)
+
+
+def _record_history(filename, original_mb, transcoded_mb, uploaded, error=None):
+    with _history_lock:
+        _history.appendleft({
+            "filename": filename,
+            "original_mb": original_mb,
+            "transcoded_mb": transcoded_mb,
+            "ratio": (original_mb / transcoded_mb) if transcoded_mb else None,
+            "uploaded": uploaded,
+            "error": error,
+        })
+
+
+def segment_history() -> list:
+    with _history_lock:
+        return list(_history)
 
 
 def transcode_and_upload_async(path: str, filename: str) -> None:
@@ -37,6 +59,8 @@ def _transcode_and_upload(path: str, filename: str) -> None:
     root, _ext = os.path.splitext(filename)
     out_filename = f"{root}.mp4"
     out_path = os.path.join(os.path.dirname(path), out_filename)
+
+    original_mb = os.path.getsize(path) / (1024 * 1024)
 
     try:
         subprocess.run(
@@ -55,14 +79,19 @@ def _transcode_and_upload(path: str, filename: str) -> None:
         logger.error("transcode failed for %s, uploading original instead: %s", filename, detail)
         # Original is the only copy that exists -- only delete it once its
         # upload is confirmed, same rule as the transcoded-success path.
-        if upload_sync(path, filename):
+        ok = upload_sync(path, filename)
+        if ok:
             try:
                 os.remove(path)
             except OSError:
                 pass
+        _record_history(filename, original_mb, None, ok, error=f"transcode failed: {detail}")
         return
 
-    logger.info("transcoded %s -> %s", filename, out_filename)
+    transcoded_mb = os.path.getsize(out_path) / (1024 * 1024)
+    logger.info(
+        "transcoded %s -> %s (%.1f MB -> %.1f MB)", filename, out_filename, original_mb, transcoded_mb
+    )
 
     # The original's only job was to survive long enough to produce a valid
     # transcode -- ffmpeg already reported success, so it's done its job.
@@ -75,7 +104,8 @@ def _transcode_and_upload(path: str, filename: str) -> None:
     except OSError:
         pass
 
-    if upload_sync(out_path, out_filename):
+    ok = upload_sync(out_path, out_filename)
+    if ok:
         try:
             os.remove(out_path)
         except OSError:
@@ -85,3 +115,4 @@ def _transcode_and_upload(path: str, filename: str) -> None:
             "upload of transcoded %s failed; keeping it locally until it can be retried",
             out_filename,
         )
+    _record_history(filename, original_mb, transcoded_mb, ok, error=None if ok else "upload failed")
