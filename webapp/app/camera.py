@@ -17,9 +17,11 @@ from datetime import datetime
 import psutil
 
 from . import mvsdk
+from .transcode import transcode_and_upload_async
 
 RETRY_INTERVAL_SECONDS = 5
 STATS_WINDOW = 100  # frames kept for the rolling ISP-time / fps averages
+DEFAULT_CHUNK_SECONDS = 60
 
 _process = psutil.Process(os.getpid())
 _process.cpu_percent(interval=None)  # prime it; first real call below is meaningful
@@ -47,6 +49,16 @@ class CameraController:
         self._record_stop_event = threading.Event()
         self._current_recording_file = None
         self._recording_started_at = None
+
+        # A "recording" is actually a series of short chunks under the hood
+        # (see start_recording) -- this is invisible to the API/website,
+        # which only ever sees one continuous Start-to-Stop recording.
+        self._session_id = None
+        self._segment_index = 0
+        self._segment_started_at_mono = None
+        self._chunk_seconds = DEFAULT_CHUNK_SECONDS
+        self._frame_rate = 25
+        self._session_total_bytes = 0
 
         self._last_error = None
         self._current_resolution = None
@@ -140,6 +152,11 @@ class CameraController:
                 "recording": self._recording,
                 "current_file": self._current_recording_file,
                 "current_file_size_bytes": current_file_size_bytes,
+                "session_id": self._session_id,
+                "segment_index": self._segment_index,
+                # Sum of already-finished chunks this session; add
+                # current_file_size_bytes for the live running total.
+                "session_total_bytes": self._session_total_bytes,
                 "recording_started_at": self._recording_started_at,
                 "current_resolution": self._current_resolution,
                 "device": {
@@ -308,41 +325,79 @@ class CameraController:
             return filename
 
     # ------------------------------------------------------------ record
+    #
+    # A "recording" is actually a back-to-back series of short chunks (see
+    # DEFAULT_CHUNK_SECONDS): the grab loop runs continuously for the whole
+    # session, but every chunk_seconds it closes the current chunk and opens
+    # a new one, handing the finished chunk off to transcode_and_upload_async
+    # (MSCV -> H.264, then uploaded) in the background. This keeps local
+    # storage bounded to roughly one chunk's worth of MSCV data regardless
+    # of how long the overall recording runs -- a full match's raw MSCV
+    # output would otherwise be too large to even hold locally on a
+    # storage-constrained edge box. None of this is visible through the
+    # API: start_recording/stop_recording still look like one continuous
+    # recording from the outside.
 
-    def start_recording(self, filename: str | None = None, frame_rate: int = 25) -> str:
+    def _segment_filename(self) -> str:
+        self._segment_index += 1
+        return f"match_{self._session_id}_seg{self._segment_index:03d}{self._resolution_tag()}.avi"
+
+    def _open_segment(self, hCamera):
+        filename = self._segment_filename()
+        path = os.path.join(self.storage_dir, filename)
+
+        mvsdk.CameraInitRecord(
+            hCamera,
+            1,  # MSCV-compressed; 0 would be uncompressed
+            path,
+            True,  # split file if it exceeds 2GB
+            90,  # quality factor
+            self._frame_rate,
+        )
+
+        # With split-on-2GB enabled, the SDK always writes the first
+        # segment as "<name>-1.<ext>" instead of "<name>.<ext>", even
+        # when the recording never grows large enough to split. Track
+        # the name it actually wrote, not the one we asked for, or every
+        # lookup (this chunk's size, transcode input path) 404s.
+        root, ext = os.path.splitext(filename)
+        filename = f"{root}-1{ext}"
+
+        self._current_recording_file = filename
+        self._segment_started_at_mono = time.monotonic()
+
+    def _close_segment(self, hCamera):
+        mvsdk.CameraStopRecord(hCamera)
+        finished_file = self._current_recording_file
+        finished_path = os.path.join(self.storage_dir, finished_file)
+
+        try:
+            self._session_total_bytes += os.path.getsize(finished_path)
+        except OSError:
+            pass
+
+        transcode_and_upload_async(finished_path, finished_file)
+
+    def start_recording(self, frame_rate: int = 25, chunk_seconds: int = DEFAULT_CHUNK_SECONDS) -> str:
         with self._lock:
             hCamera = self._require_camera()
             if self._recording:
                 raise RuntimeError("a recording is already in progress")
 
-            if filename is None:
-                filename = f"recording_{datetime.now():%Y%m%d_%H%M%S}{self._resolution_tag()}.avi"
-            path = os.path.join(self.storage_dir, filename)
+            self._session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self._segment_index = 0
+            self._chunk_seconds = chunk_seconds
+            self._frame_rate = frame_rate
+            self._session_total_bytes = 0
+            self._recording_started_at = datetime.now().isoformat()
 
-            mvsdk.CameraInitRecord(
-                hCamera,
-                1,  # MSCV-compressed; 0 would be uncompressed
-                path,
-                True,  # split file if it exceeds 2GB
-                90,  # quality factor
-                frame_rate,
-            )
-
-            # With split-on-2GB enabled, the SDK always writes the first
-            # segment as "<name>-1.<ext>" instead of "<name>.<ext>", even
-            # when the recording never grows large enough to split. Track
-            # the name it actually wrote, not the one we asked for, or
-            # every lookup (download, upload-to-central) 404s.
-            root, ext = os.path.splitext(filename)
-            filename = f"{root}-1{ext}"
+            self._open_segment(hCamera)
 
             self._recording = True
-            self._current_recording_file = filename
-            self._recording_started_at = datetime.now().isoformat()
             self._record_stop_event.clear()
             self._record_thread = threading.Thread(target=self._record_loop, daemon=True)
             self._record_thread.start()
-            return filename
+            return self._session_id
 
     def _record_loop(self):
         hCamera = self._hCamera
@@ -360,6 +415,13 @@ class CameraController:
                 self._last_error = str(e)
                 break
 
+            if time.monotonic() - self._segment_started_at_mono >= self._chunk_seconds:
+                with self._lock:
+                    if self._record_stop_event.is_set():
+                        break
+                    self._close_segment(hCamera)
+                    self._open_segment(hCamera)
+
     def stop_recording(self) -> str:
         with self._lock:
             if not self._recording:
@@ -373,10 +435,10 @@ class CameraController:
             thread.join(timeout=10)
 
         with self._lock:
-            mvsdk.CameraStopRecord(hCamera)
-            filename = self._current_recording_file
+            self._close_segment(hCamera)
+            session_id = self._session_id
             self._recording = False
             self._current_recording_file = None
             self._recording_started_at = None
             self._record_thread = None
-            return filename
+            return session_id

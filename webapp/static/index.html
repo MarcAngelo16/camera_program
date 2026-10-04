@@ -174,11 +174,16 @@ async function refreshStatus() {
     document.getElementById('resSelect').disabled = !s.connected || s.recording;
 
     const sizeEl = document.getElementById('recordingSize');
-    if (s.recording && s.current_file_size_bytes != null) {
+    if (s.recording) {
       recordingStartedAtMs = recordingStartedAtMs || new Date(s.recording_started_at).getTime();
       const elapsedMin = Math.max((Date.now() - recordingStartedAtMs) / 60000, 1 / 60);
-      const mb = s.current_file_size_bytes / 1e6;
-      sizeEl.textContent = `Recorded so far: ${mb.toFixed(1)} MB (~${(mb / elapsedMin).toFixed(1)} MB/min)`;
+      // session_total_bytes covers already-closed chunks; current_file_size_bytes
+      // is the in-progress chunk -- add them for the running session total
+      // (recording is chunked into ~1min segments under the hood; size would
+      // otherwise appear to reset every chunk instead of growing the whole session).
+      const totalBytes = (s.session_total_bytes || 0) + (s.current_file_size_bytes || 0);
+      const mb = totalBytes / 1e6;
+      sizeEl.textContent = `Segment ${s.segment_index}, recorded so far: ${mb.toFixed(1)} MB (~${(mb / elapsedMin).toFixed(1)} MB/min, pre-compression)`;
     } else {
       recordingStartedAtMs = null;
       sizeEl.textContent = '';

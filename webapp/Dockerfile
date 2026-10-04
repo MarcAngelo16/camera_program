@@ -8,6 +8,13 @@ ARG SDK_LIB_DIR=lib/x64
 COPY ${SDK_LIB_DIR}/libMVSDK.so /usr/lib/libMVSDK.so
 RUN ldconfig
 
+# ffmpeg transcodes each recording chunk (MSCV -> H.264) after it closes --
+# see app/transcode.py. Needed on any edge box that records, not on a
+# camera-less instance like the central VPS, but installing it everywhere
+# this image runs is simpler than maintaining two Dockerfiles.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY webapp/requirements.txt .

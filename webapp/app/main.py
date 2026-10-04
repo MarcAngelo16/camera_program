@@ -56,24 +56,25 @@ def set_resolution(req: ResolutionRequest):
 @app.post("/api/record/start")
 def record_start():
     try:
-        filename = controller.start_recording()
+        session_id = controller.start_recording()
     except CameraNotReady as e:
         raise HTTPException(status_code=503, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return {"recording": True, "file": filename}
+    return {"recording": True, "session_id": session_id}
 
 
 @app.post("/api/record/stop")
 def record_stop():
     try:
-        filename = controller.stop_recording()
+        session_id = controller.stop_recording()
     except CameraNotReady as e:
         raise HTTPException(status_code=503, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    upload_async(os.path.join(STORAGE_DIR, filename), filename)
-    return {"recording": False, "file": filename}
+    # Each chunk is transcoded + uploaded on its own as it closes (including
+    # the final one, closed inside stop_recording) -- nothing to upload here.
+    return {"recording": False, "session_id": session_id}
 
 
 @app.post("/api/snapshot")

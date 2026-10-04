@@ -27,10 +27,20 @@ _last_upload = {"filename": None, "duration_s": None, "mb": None, "mbps": None, 
 def upload_async(path: str, filename: str) -> None:
     if not UPLOAD_URL:
         return
-    threading.Thread(target=_upload, args=(path, filename), daemon=True).start()
+    threading.Thread(target=upload_sync, args=(path, filename), daemon=True).start()
 
 
-def _upload(path: str, filename: str) -> None:
+def upload_sync(path: str, filename: str) -> bool:
+    """Upload and block until it's done. Returns True only if the file is
+    confirmed to have reached central storage -- callers that need to free
+    local disk (e.g. the per-chunk transcode step) must only delete their
+    local copy once this returns True, never optimistically beforehand.
+    Returns False (not an exception) if UPLOAD_URL isn't set at all, since
+    "nothing was uploaded" and "upload failed" both mean "don't delete yet."
+    """
+    if not UPLOAD_URL:
+        return False
+
     # Upload is bandwidth/IO-bound, not CPU-bound, so duration + throughput
     # (not CPU%) is the meaningful cost to report for "sending to server."
     size_mb = os.path.getsize(path) / (1024 * 1024)
@@ -51,12 +61,14 @@ def _upload(path: str, filename: str) -> None:
                 error=None,
             )
         logger.info("uploaded %s to central storage (%.1fs, %.1f MB)", filename, duration, size_mb)
+        return True
     except Exception as e:
         with _last_upload_lock:
             _last_upload.update(
                 filename=filename, duration_s=None, mb=size_mb, mbps=None, error=str(e)
             )
         logger.error("failed to upload %s to central storage: %s", filename, e)
+        return False
 
 
 def last_upload_stats() -> dict:
