@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .camera import CameraController, CameraNotReady
-from .upload import upload_async
+from .upload import last_upload_stats, upload_async
 
 # Default layout: webapp/app/main.py -> webapp/storage, webapp/static.
 # In the Docker image this is /app/app/main.py -> /app/storage, /app/static,
@@ -28,7 +28,9 @@ def camera_status():
 
 @app.get("/api/camera/stats")
 def camera_stats():
-    return controller.stats()
+    stats = controller.stats()
+    stats["last_upload"] = last_upload_stats()
+    return stats
 
 
 @app.get("/api/camera/resolutions")

@@ -50,6 +50,7 @@ class CameraController:
 
         self._last_error = None
         self._current_resolution = None
+        self._frame_buffer_bytes = None
 
         self._isp_times_ms = deque(maxlen=STATS_WINDOW)
         self._frame_timestamps = deque(maxlen=STATS_WINDOW)
@@ -108,6 +109,7 @@ class CameraController:
             self._mono = mono
             self._dev_info = dev_info
             self._rgb_buffer = rgb_buffer
+            self._frame_buffer_bytes = buffer_size
             self._last_error = None
             self._current_resolution = {
                 "width": current_res.iWidth,
@@ -219,9 +221,19 @@ class CameraController:
         isp_times = list(self._isp_times_ms)
         timestamps = list(self._frame_timestamps)
 
+        isp_ms_avg = sum(isp_times) / len(isp_times) if isp_times else None
+
         achieved_fps = None
         if len(timestamps) >= 2:
             achieved_fps = (len(timestamps) - 1) / (timestamps[-1] - timestamps[0])
+
+        # ISP cost in isolation: time per frame times frames/sec = fraction
+        # of one core continuously busy doing *just* that native call --
+        # independent of whatever else the process happens to be doing
+        # (serving status polls, etc), unlike whole-process CPU%.
+        isp_cpu_load_cores = None
+        if isp_ms_avg is not None and achieved_fps is not None:
+            isp_cpu_load_cores = (isp_ms_avg / 1000) * achieved_fps
 
         # psutil reports CPU% relative to one core (100% = one core fully
         # busy), which is meaningless without knowing how many cores the
@@ -233,9 +245,17 @@ class CameraController:
 
         return {
             "frames_processed": self._frames_processed,
-            "isp_ms_avg": sum(isp_times) / len(isp_times) if isp_times else None,
+            "isp_ms_avg": isp_ms_avg,
             "isp_ms_last": isp_times[-1] if isp_times else None,
             "achieved_fps": achieved_fps,
+            "isp_cpu_load_cores": isp_cpu_load_cores,
+            # Fixed at startup (max_width * max_height * 3 bytes), reused
+            # every frame -- not a live/growing number, so it's the honest
+            # answer to "how much RAM does capture need," unlike total RSS
+            # which also includes the whole Python/FastAPI runtime.
+            "frame_buffer_mb": (
+                self._frame_buffer_bytes / (1024 * 1024) if self._frame_buffer_bytes else None
+            ),
             "process_cpu_percent": cpu_percent,
             "process_cores_used": cpu_percent / 100,
             "cpu_count": cpu_count,
