@@ -243,7 +243,32 @@ class CameraController:
         cpu_percent = _process.cpu_percent(interval=None)
         cpu_count = os.cpu_count() or 1
 
+        # Camera-side settings that cap achievable fps independently of CPU:
+        # a frame-speed tier (Low/Normal/High, set once at init, defaults to
+        # whatever the hardware ships with since nothing here calls
+        # CameraSetFrameSpeed) and exposure time (longer exposure under dim
+        # lighting directly reduces max fps; auto-exposure picks this for you).
+        frame_speed_index = None
+        frame_speed_max_index = None
+        ae_enabled = None
+        exposure_time_us = None
+        with self._lock:
+            hCamera = self._hCamera
+            cap = self._capability
+        if hCamera is not None:
+            try:
+                frame_speed_index = mvsdk.CameraGetFrameSpeed(hCamera)
+                frame_speed_max_index = cap.iFrameSpeedDesc - 1 if cap else None
+                ae_enabled = bool(mvsdk.CameraGetAeState(hCamera))
+                exposure_time_us = mvsdk.CameraGetExposureTime(hCamera)
+            except Exception:
+                pass
+
         return {
+            "frame_speed_index": frame_speed_index,
+            "frame_speed_max_index": frame_speed_max_index,
+            "ae_enabled": ae_enabled,
+            "exposure_time_us": exposure_time_us,
             "frames_processed": self._frames_processed,
             "isp_ms_avg": isp_ms_avg,
             "isp_ms_last": isp_times[-1] if isp_times else None,

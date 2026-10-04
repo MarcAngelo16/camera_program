@@ -80,6 +80,8 @@
         <tr><td class="muted">ISP CPU load</td><td id="statIspCpu">—</td></tr>
         <tr><td class="muted">Frame buffer (fixed)</td><td id="statBuffer">—</td></tr>
         <tr><td class="muted">Achieved frame rate</td><td id="statFps">—</td></tr>
+        <tr><td class="muted">Frame speed tier</td><td id="statFrameSpeed">—</td></tr>
+        <tr><td class="muted">Auto-exposure / exposure time</td><td id="statExposure">—</td></tr>
         <tr><td class="muted">Last upload to server</td><td id="statUpload">—</td></tr>
         <tr><td class="muted">Whole process (total)</td><td id="statProcess">—</td></tr>
       </tbody>
@@ -262,6 +264,12 @@ async function refreshStats() {
       : '—';
     document.getElementById('statFps').textContent = s.achieved_fps != null
       ? `${s.achieved_fps.toFixed(1)} fps`
+      : '—';
+    document.getElementById('statFrameSpeed').textContent = s.frame_speed_index != null
+      ? `${s.frame_speed_index} of 0-${s.frame_speed_max_index} (higher = faster)`
+      : '—';
+    document.getElementById('statExposure').textContent = s.exposure_time_us != null
+      ? `${s.ae_enabled ? 'auto' : 'manual'}, ${(s.exposure_time_us / 1000).toFixed(2)} ms`
       : '—';
 
     const u = s.last_upload;
