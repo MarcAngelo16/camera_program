@@ -53,22 +53,26 @@ def _transcode_and_upload(path: str, filename: str) -> None:
     except Exception as e:
         detail = e.stderr.decode(errors="replace")[-500:] if isinstance(e, subprocess.CalledProcessError) else str(e)
         logger.error("transcode failed for %s, uploading original instead: %s", filename, detail)
-        # Original is the only copy that exists -- never delete it here,
-        # regardless of whether this upload succeeds; upload_sync itself
-        # may retry/surface failures via last_upload_stats() for visibility.
-        upload_sync(path, filename)
+        # Original is the only copy that exists -- only delete it once its
+        # upload is confirmed, same rule as the transcoded-success path.
+        if upload_sync(path, filename):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         return
 
     logger.info("transcoded %s -> %s", filename, out_filename)
     if upload_sync(out_path, out_filename):
-        # Only delete the original now that the smaller replacement is
-        # confirmed to have reached central storage -- this is the one
-        # moment it's actually safe to free the local disk space that
-        # chunking was built to bound in the first place.
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        # Both the original and its now-confirmed-uploaded replacement are
+        # safe to drop locally -- keeping either around indefinitely would
+        # let local storage grow without bound over many matches, which is
+        # exactly what chunking was built to avoid in the first place.
+        for p in (path, out_path):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
     else:
         logger.error(
             "upload of transcoded %s failed; keeping original %s locally until it can be retried",
