@@ -73,6 +73,18 @@
   </div>
 
   <div class="card">
+    <strong>Resource usage</strong>
+    <table id="statsTable" style="margin-top: 10px;">
+      <tbody>
+        <tr><td class="muted">CPU</td><td id="statCpu">—</td></tr>
+        <tr><td class="muted">RAM</td><td id="statRam">—</td></tr>
+        <tr><td class="muted">ISP time / frame</td><td id="statIsp">—</td></tr>
+        <tr><td class="muted">Achieved frame rate</td><td id="statFps">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
     <div class="row">
       <strong>Saved files</strong>
       <button onclick="loadRecordings()">Refresh</button>
@@ -233,10 +245,26 @@ async function loadRecordings() {
   } catch (e) { setError(e.message); }
 }
 
+async function refreshStats() {
+  try {
+    const s = await api('/api/camera/stats');
+    document.getElementById('statCpu').textContent = `${s.process_cpu_percent.toFixed(1)}%`;
+    document.getElementById('statRam').textContent = `${s.process_rss_mb.toFixed(0)} MB`;
+    document.getElementById('statIsp').textContent = s.isp_ms_avg != null
+      ? `${s.isp_ms_avg.toFixed(1)} ms avg (last ${s.isp_ms_last.toFixed(1)} ms)`
+      : 'no frames processed yet';
+    document.getElementById('statFps').textContent = s.achieved_fps != null
+      ? `${s.achieved_fps.toFixed(1)} fps`
+      : '—';
+  } catch (e) { /* edge box unreachable; refreshStatus already surfaces this */ }
+}
+
 refreshStatus();
 loadRecordings();
 loadResolutions();
+refreshStats();
 setInterval(refreshStatus, 3000);
+setInterval(refreshStats, 3000);
 </script>
 </body>
 </html>
