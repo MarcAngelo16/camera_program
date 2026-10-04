@@ -25,6 +25,11 @@ def camera_status():
     return controller.status()
 
 
+@app.get("/api/camera/stats")
+def camera_stats():
+    return controller.stats()
+
+
 @app.post("/api/record/start")
 def record_start():
     try:

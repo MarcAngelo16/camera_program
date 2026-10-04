@@ -11,11 +11,18 @@ Responsibilities:
 import os
 import threading
 import time
+from collections import deque
 from datetime import datetime
+
+import psutil
 
 from . import mvsdk
 
 RETRY_INTERVAL_SECONDS = 5
+STATS_WINDOW = 100  # frames kept for the rolling ISP-time / fps averages
+
+_process = psutil.Process(os.getpid())
+_process.cpu_percent(interval=None)  # prime it; first real call below is meaningful
 
 
 class CameraNotReady(Exception):
@@ -42,6 +49,10 @@ class CameraController:
         self._recording_started_at = None
 
         self._last_error = None
+
+        self._isp_times_ms = deque(maxlen=STATS_WINDOW)
+        self._frame_timestamps = deque(maxlen=STATS_WINDOW)
+        self._frames_processed = 0
 
         mvsdk.CameraSdkInit(1)
 
@@ -132,10 +143,36 @@ class CameraController:
         hCamera = self._hCamera
         pRawData, frame_head = mvsdk.CameraGetImageBuffer(hCamera, 2000)
         try:
+            t0 = time.perf_counter()
             mvsdk.CameraImageProcess(hCamera, pRawData, self._rgb_buffer, frame_head)
+            isp_ms = (time.perf_counter() - t0) * 1000
         finally:
             mvsdk.CameraReleaseImageBuffer(hCamera, pRawData)
+        self._isp_times_ms.append(isp_ms)
+        self._frame_timestamps.append(time.monotonic())
+        self._frames_processed += 1
         return frame_head
+
+    def stats(self):
+        """Resource usage: time spent in the SDK's ISP step per frame (the
+        raw-sensor-to-RGB conversion, done on CPU), the frame rate that's
+        actually being achieved, and overall process CPU/RAM. Useful for
+        judging whether a given machine (e.g. a Raspberry Pi) can keep up."""
+        isp_times = list(self._isp_times_ms)
+        timestamps = list(self._frame_timestamps)
+
+        achieved_fps = None
+        if len(timestamps) >= 2:
+            achieved_fps = (len(timestamps) - 1) / (timestamps[-1] - timestamps[0])
+
+        return {
+            "frames_processed": self._frames_processed,
+            "isp_ms_avg": sum(isp_times) / len(isp_times) if isp_times else None,
+            "isp_ms_last": isp_times[-1] if isp_times else None,
+            "achieved_fps": achieved_fps,
+            "process_cpu_percent": _process.cpu_percent(interval=None),
+            "process_rss_mb": _process.memory_info().rss / (1024 * 1024),
+        }
 
     # ------------------------------------------------------------ snapshot
 
