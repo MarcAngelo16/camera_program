@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .camera import CameraController, CameraNotReady
-from .transcode import segment_history
+from .transcode import is_transcode_enabled, segment_history, set_transcode_enabled
 from .upload import last_upload_stats, upload_async
 
 # Default layout: webapp/app/main.py -> webapp/storage, webapp/static.
@@ -33,6 +33,21 @@ def camera_stats():
     stats["last_upload"] = last_upload_stats()
     stats["segment_history"] = segment_history()
     return stats
+
+
+@app.get("/api/camera/transcode")
+def get_transcode():
+    return {"transcode_enabled": is_transcode_enabled()}
+
+
+class TranscodeRequest(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/camera/transcode")
+def set_transcode(req: TranscodeRequest):
+    set_transcode_enabled(req.enabled)
+    return {"transcode_enabled": is_transcode_enabled()}
 
 
 @app.get("/api/camera/resolutions")
@@ -111,6 +126,30 @@ def download_recording(name: str):
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="file not found")
     return FileResponse(path, filename=name)
+
+
+@app.delete("/api/recordings/{name}")
+def delete_recording(name: str):
+    if "/" in name or name in (".", ".."):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    path = os.path.join(STORAGE_DIR, name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="file not found")
+    os.remove(path)
+    return {"deleted": name}
+
+
+@app.delete("/api/recordings")
+def delete_all_recordings():
+    deleted = []
+    for name in os.listdir(STORAGE_DIR):
+        if name.startswith("."):
+            continue
+        path = os.path.join(STORAGE_DIR, name)
+        if os.path.isfile(path):
+            os.remove(path)
+            deleted.append(name)
+    return {"deleted": deleted}
 
 
 @app.post("/api/upload")

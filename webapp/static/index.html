@@ -63,6 +63,10 @@
       <label class="muted" for="resSelect">Resolution</label>
       <select id="resSelect" onchange="applyResolution()"></select>
     </div>
+    <div class="row" style="margin-top: 10px;">
+      <label class="muted" for="transcodeToggle">Transcode to H.264 before upload</label>
+      <input type="checkbox" id="transcodeToggle" checked onchange="applyTranscodeToggle()">
+    </div>
     <div class="actions">
       <button id="btnStart" class="primary" onclick="startRecording()">Start Recording</button>
       <button id="btnStop" class="stop" onclick="stopRecording()" disabled>Stop Recording</button>
@@ -99,10 +103,14 @@
   <div class="card">
     <div class="row">
       <strong>Saved files</strong>
-      <button onclick="loadRecordings()">Refresh</button>
+      <div class="actions" style="margin-top: 0;">
+        <button onclick="deleteSelected()">Delete selected</button>
+        <button class="stop" onclick="deleteAll()">Delete all</button>
+        <button onclick="loadRecordings()">Refresh</button>
+      </div>
     </div>
     <table id="fileTable">
-      <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+      <thead><tr><th></th><th>Name</th><th>Size</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -255,10 +263,52 @@ async function loadRecordings() {
     tbody.innerHTML = '';
     for (const f of data.files.reverse()) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${f.name}</td><td>${fmtSize(f.size_bytes)}</td>` +
-        `<td><a href="/api/recordings/${encodeURIComponent(f.name)}">Download</a></td>`;
+      const safeName = encodeURIComponent(f.name);
+      tr.innerHTML = `<td><input type="checkbox" class="fileCheck" value="${safeName}"></td>` +
+        `<td>${f.name}</td><td>${fmtSize(f.size_bytes)}</td>` +
+        `<td><a href="/api/recordings/${safeName}">Download</a></td>`;
       tbody.appendChild(tr);
     }
+  } catch (e) { setError(e.message); }
+}
+
+async function deleteSelected() {
+  const checked = [...document.querySelectorAll('.fileCheck:checked')].map(cb => cb.value);
+  if (checked.length === 0) return;
+  if (!confirm(`Delete ${checked.length} file(s) from the server? This cannot be undone.`)) return;
+  setError('');
+  for (const name of checked) {
+    try { await api(`/api/recordings/${name}`, { method: 'DELETE' }); }
+    catch (e) { setError(e.message); }
+  }
+  loadRecordings();
+}
+
+async function deleteAll() {
+  if (!confirm('Delete ALL saved files on the server? This cannot be undone.')) return;
+  setError('');
+  try {
+    await api('/api/recordings', { method: 'DELETE' });
+  } catch (e) { setError(e.message); }
+  loadRecordings();
+}
+
+async function loadTranscodeSetting() {
+  try {
+    const data = await api('/api/camera/transcode');
+    document.getElementById('transcodeToggle').checked = data.transcode_enabled;
+  } catch (e) { /* edge box unreachable; refreshStatus already surfaces this */ }
+}
+
+async function applyTranscodeToggle() {
+  setError('');
+  const enabled = document.getElementById('transcodeToggle').checked;
+  try {
+    await api('/api/camera/transcode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
   } catch (e) { setError(e.message); }
 }
 
@@ -301,7 +351,10 @@ async function refreshStats() {
       const tr = document.createElement('tr');
       const transcodedText = seg.transcoded_mb != null ? `${seg.transcoded_mb.toFixed(1)} MB` : '—';
       const ratioText = seg.ratio != null ? `${seg.ratio.toFixed(1)}x` : '—';
-      const statusText = seg.uploaded ? 'uploaded' : `failed: ${seg.error || 'unknown'}`;
+      const modeLabel = seg.mode === 'skipped' ? 'transcode off'
+        : seg.mode === 'transcode_failed' ? 'transcode failed'
+        : 'transcoded';
+      const statusText = seg.uploaded ? `uploaded (${modeLabel})` : `failed: ${seg.error || 'unknown'}`;
       tr.innerHTML = `<td>${seg.filename}</td><td>${seg.original_mb.toFixed(1)} MB</td>` +
         `<td>${transcodedText}</td><td>${ratioText}</td><td class="muted">${statusText}</td>`;
       tbody.appendChild(tr);
@@ -312,6 +365,7 @@ async function refreshStats() {
 refreshStatus();
 loadRecordings();
 loadResolutions();
+loadTranscodeSetting();
 refreshStats();
 setInterval(refreshStatus, 3000);
 setInterval(refreshStats, 3000);
