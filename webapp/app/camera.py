@@ -173,6 +173,14 @@ class CameraController:
                 frame_rate,
             )
 
+            # With split-on-2GB enabled, the SDK always writes the first
+            # segment as "<name>-1.<ext>" instead of "<name>.<ext>", even
+            # when the recording never grows large enough to split. Track
+            # the name it actually wrote, not the one we asked for, or
+            # every lookup (download, upload-to-central) 404s.
+            root, ext = os.path.splitext(filename)
+            filename = f"{root}-1{ext}"
+
             self._recording = True
             self._current_recording_file = filename
             self._recording_started_at = datetime.now().isoformat()
