@@ -49,6 +49,7 @@ class CameraController:
         self._recording_started_at = None
 
         self._last_error = None
+        self._current_resolution = None
 
         self._isp_times_ms = deque(maxlen=STATS_WINDOW)
         self._frame_timestamps = deque(maxlen=STATS_WINDOW)
@@ -99,6 +100,8 @@ class CameraController:
         )
         mvsdk.CameraPlay(hCamera)
 
+        current_res = mvsdk.CameraGetImageResolution(hCamera)
+
         with self._lock:
             self._hCamera = hCamera
             self._capability = capability
@@ -106,6 +109,11 @@ class CameraController:
             self._dev_info = dev_info
             self._rgb_buffer = rgb_buffer
             self._last_error = None
+            self._current_resolution = {
+                "width": current_res.iWidth,
+                "height": current_res.iHeight,
+                "description": current_res.GetDescription() or "default",
+            }
 
     # -------------------------------------------------------------- status
 
@@ -117,11 +125,21 @@ class CameraController:
                     "recording": False,
                     "last_error": self._last_error,
                 }
+            current_file_size_bytes = None
+            if self._recording and self._current_recording_file:
+                try:
+                    current_file_size_bytes = os.path.getsize(
+                        os.path.join(self.storage_dir, self._current_recording_file)
+                    )
+                except OSError:
+                    pass
             return {
                 "connected": True,
                 "recording": self._recording,
                 "current_file": self._current_recording_file,
+                "current_file_size_bytes": current_file_size_bytes,
                 "recording_started_at": self._recording_started_at,
+                "current_resolution": self._current_resolution,
                 "device": {
                     "product_name": self._dev_info.GetProductName(),
                     "friendly_name": self._dev_info.GetFriendlyName(),
@@ -134,6 +152,46 @@ class CameraController:
         if self._hCamera is None:
             raise CameraNotReady("camera is not connected")
         return self._hCamera
+
+    # ---------------------------------------------------------- resolution
+
+    def resolution_presets(self):
+        with self._lock:
+            cap = self._capability
+            if cap is None:
+                return []
+            return [
+                {
+                    "index": cap.pImageSizeDesc[i].iIndex,
+                    "description": cap.pImageSizeDesc[i].GetDescription() or None,
+                    "width": cap.pImageSizeDesc[i].iWidth,
+                    "height": cap.pImageSizeDesc[i].iHeight,
+                }
+                for i in range(cap.iImageSizeDesc)
+            ]
+
+    def set_resolution(self, index: int):
+        with self._lock:
+            hCamera = self._require_camera()
+            if self._recording:
+                raise RuntimeError("cannot change resolution while recording")
+
+            cap = self._capability
+            chosen = None
+            for i in range(cap.iImageSizeDesc):
+                preset = cap.pImageSizeDesc[i]
+                if preset.iIndex == index:
+                    chosen = preset
+                    break
+            if chosen is None:
+                raise ValueError(f"unknown resolution index {index}")
+
+            mvsdk.CameraSetImageResolution(hCamera, chosen)
+            self._current_resolution = {
+                "width": chosen.iWidth,
+                "height": chosen.iHeight,
+                "description": chosen.GetDescription() or None,
+            }
 
     # ---------------------------------------------------------------- grab
 
@@ -198,7 +256,10 @@ class CameraController:
                 raise RuntimeError("a recording is already in progress")
 
             if filename is None:
-                filename = f"recording_{datetime.now():%Y%m%d_%H%M%S}.avi"
+                res_tag = ""
+                if self._current_resolution:
+                    res_tag = f"_{self._current_resolution['width']}x{self._current_resolution['height']}"
+                filename = f"recording_{datetime.now():%Y%m%d_%H%M%S}{res_tag}.avi"
             path = os.path.join(self.storage_dir, filename)
 
             mvsdk.CameraInitRecord(

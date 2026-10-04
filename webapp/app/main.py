@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from .camera import CameraController, CameraNotReady
 from .upload import upload_async
@@ -28,6 +29,26 @@ def camera_status():
 @app.get("/api/camera/stats")
 def camera_stats():
     return controller.stats()
+
+
+@app.get("/api/camera/resolutions")
+def camera_resolutions():
+    return {"presets": controller.resolution_presets()}
+
+
+class ResolutionRequest(BaseModel):
+    index: int
+
+
+@app.post("/api/camera/resolution")
+def set_resolution(req: ResolutionRequest):
+    try:
+        controller.set_resolution(req.index)
+    except CameraNotReady as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return controller.status()
 
 
 @app.post("/api/record/start")

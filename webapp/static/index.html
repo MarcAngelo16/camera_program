@@ -59,11 +59,16 @@
       </div>
       <div class="muted" id="deviceInfo"></div>
     </div>
+    <div class="row" style="margin-top: 14px;">
+      <label class="muted" for="resSelect">Resolution</label>
+      <select id="resSelect" onchange="applyResolution()"></select>
+    </div>
     <div class="actions">
       <button id="btnStart" class="primary" onclick="startRecording()">Start Recording</button>
       <button id="btnStop" class="stop" onclick="stopRecording()" disabled>Stop Recording</button>
       <button id="btnSnap" onclick="takeSnapshot()">Snapshot</button>
     </div>
+    <div class="muted" id="recordingSize"></div>
     <div id="err"></div>
   </div>
 
@@ -105,6 +110,37 @@ function setUnreachable(message) {
   document.getElementById('btnSnap').disabled = true;
 }
 
+let recordingStartedAtMs = null;
+let resolutionSynced = false;
+
+async function loadResolutions() {
+  try {
+    const data = await api('/api/camera/resolutions');
+    const sel = document.getElementById('resSelect');
+    sel.innerHTML = '';
+    for (const p of data.presets) {
+      const opt = document.createElement('option');
+      opt.value = p.index;
+      opt.dataset.width = p.width;
+      opt.dataset.height = p.height;
+      opt.textContent = `${p.width}x${p.height}` + (p.description ? ` (${p.description})` : '');
+      sel.appendChild(opt);
+    }
+  } catch (e) { /* camera/edge box not reachable yet; status polling will retry */ }
+}
+
+async function applyResolution() {
+  setError('');
+  const sel = document.getElementById('resSelect');
+  try {
+    await api('/api/camera/resolution', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ index: Number(sel.value) }),
+    });
+  } catch (e) { setError(e.message); }
+}
+
 async function refreshStatus() {
   try {
     const s = await api('/api/camera/status');
@@ -119,6 +155,30 @@ async function refreshStatus() {
     document.getElementById('btnStart').disabled = !s.connected || s.recording;
     document.getElementById('btnStop').disabled = !s.connected || !s.recording;
     document.getElementById('btnSnap').disabled = !s.connected;
+    document.getElementById('resSelect').disabled = !s.connected || s.recording;
+
+    const sizeEl = document.getElementById('recordingSize');
+    if (s.recording && s.current_file_size_bytes != null) {
+      recordingStartedAtMs = recordingStartedAtMs || new Date(s.recording_started_at).getTime();
+      const elapsedMin = Math.max((Date.now() - recordingStartedAtMs) / 60000, 1 / 60);
+      const mb = s.current_file_size_bytes / 1e6;
+      sizeEl.textContent = `Recorded so far: ${mb.toFixed(1)} MB (~${(mb / elapsedMin).toFixed(1)} MB/min)`;
+    } else {
+      recordingStartedAtMs = null;
+      sizeEl.textContent = '';
+    }
+
+    if (s.connected && s.current_resolution && !resolutionSynced) {
+      const sel = document.getElementById('resSelect');
+      for (const opt of sel.options) {
+        if (opt.dataset.width === String(s.current_resolution.width) &&
+            opt.dataset.height === String(s.current_resolution.height)) {
+          sel.value = opt.value;
+          resolutionSynced = true;
+          break;
+        }
+      }
+    }
     setError('');
   } catch (e) {
     // The edge box (laptop) is unreachable over the tunnel, or its app isn't
@@ -175,6 +235,7 @@ async function loadRecordings() {
 
 refreshStatus();
 loadRecordings();
+loadResolutions();
 setInterval(refreshStatus, 3000);
 </script>
 </body>
