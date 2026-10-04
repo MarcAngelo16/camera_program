@@ -63,18 +63,25 @@ def _transcode_and_upload(path: str, filename: str) -> None:
         return
 
     logger.info("transcoded %s -> %s", filename, out_filename)
+
+    # The original's only job was to survive long enough to produce a valid
+    # transcode -- ffmpeg already reported success, so it's done its job.
+    # Deleting it now (not waiting for the upload too) is what actually
+    # bounds local storage: this is the large MSCV file, and holding it
+    # through the upload step as well would defeat the point of
+    # transcoding promptly in the first place.
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
     if upload_sync(out_path, out_filename):
-        # Both the original and its now-confirmed-uploaded replacement are
-        # safe to drop locally -- keeping either around indefinitely would
-        # let local storage grow without bound over many matches, which is
-        # exactly what chunking was built to avoid in the first place.
-        for p in (path, out_path):
-            try:
-                os.remove(p)
-            except OSError:
-                pass
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
     else:
         logger.error(
-            "upload of transcoded %s failed; keeping original %s locally until it can be retried",
-            out_filename, filename,
+            "upload of transcoded %s failed; keeping it locally until it can be retried",
+            out_filename,
         )
