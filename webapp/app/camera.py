@@ -172,6 +172,29 @@ class CameraController:
             raise CameraNotReady("camera is not connected")
         return self._hCamera
 
+    def supported_media_types(self):
+        """Every output format this specific camera unit actually reports
+        supporting, straight from its own capability list -- not from SDK
+        documentation, which only says what *some* MindVision models can
+        do, not what this one does. Used to check for real hardware
+        H.264/H.265 output (CAMERA_MEDIA_TYPE_H264_MV / _H265_MV): if either
+        appears here, this camera can encode in hardware and the whole
+        MSCV-then-transcode pipeline becomes unnecessary; if not, it can't,
+        regardless of what the SDK generally supports."""
+        with self._lock:
+            cap = self._capability
+            if cap is None:
+                return []
+            return [
+                {
+                    "index": cap.pMediaTypeDesc[i].iIndex,
+                    "description": cap.pMediaTypeDesc[i].GetDescription() or None,
+                    "media_type": cap.pMediaTypeDesc[i].iMediaType,
+                    "media_type_hex": f"0x{cap.pMediaTypeDesc[i].iMediaType:08X}",
+                }
+                for i in range(cap.iMediaTypeDesc)
+            ]
+
     # ---------------------------------------------------------- resolution
 
     def resolution_presets(self):

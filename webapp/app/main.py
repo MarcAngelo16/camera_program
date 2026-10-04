@@ -55,6 +55,16 @@ def camera_resolutions():
     return {"presets": controller.resolution_presets()}
 
 
+@app.get("/api/camera/media-types")
+def camera_media_types():
+    """Checks whether this specific camera reports hardware H.264/H.265
+    output support (CAMERA_MEDIA_TYPE_H264_MV = 0x02080067, _H265_MV =
+    0x02080068) -- see supported_media_types() in camera.py."""
+    types = controller.supported_media_types()
+    hw_h264 = any(t["media_type"] in (0x02080067, 0x02080068) for t in types)
+    return {"media_types": types, "hardware_h264_or_h265_supported": hw_h264}
+
+
 class ResolutionRequest(BaseModel):
     index: int
 
