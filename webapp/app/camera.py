@@ -242,13 +242,18 @@ class CameraController:
             "process_rss_mb": _process.memory_info().rss / (1024 * 1024),
         }
 
+    def _resolution_tag(self) -> str:
+        if not self._current_resolution:
+            return ""
+        return f"_{self._current_resolution['width']}x{self._current_resolution['height']}"
+
     # ------------------------------------------------------------ snapshot
 
     def snapshot(self, filename: str | None = None) -> str:
         with self._lock:
             hCamera = self._require_camera()
             if filename is None:
-                filename = f"snapshot_{datetime.now():%Y%m%d_%H%M%S}.jpg"
+                filename = f"snapshot_{datetime.now():%Y%m%d_%H%M%S}{self._resolution_tag()}.jpg"
             path = os.path.join(self.storage_dir, filename)
 
             frame_head = self._grab_and_process()
@@ -266,10 +271,7 @@ class CameraController:
                 raise RuntimeError("a recording is already in progress")
 
             if filename is None:
-                res_tag = ""
-                if self._current_resolution:
-                    res_tag = f"_{self._current_resolution['width']}x{self._current_resolution['height']}"
-                filename = f"recording_{datetime.now():%Y%m%d_%H%M%S}{res_tag}.avi"
+                filename = f"recording_{datetime.now():%Y%m%d_%H%M%S}{self._resolution_tag()}.avi"
             path = os.path.join(self.storage_dir, filename)
 
             mvsdk.CameraInitRecord(
